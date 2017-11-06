@@ -31,7 +31,7 @@ def decryptor(packet):
                theta.append(az)
                theta.append(0)              #adding zero to string cause we are missing N+1, N+3, ... azimuth
                
-               del packet[i-1:i+3]
+               del packet[i-1:i+3]          #delete 4 bytes at the begining of each data block
                i=i-2
        i=i+1
      #at the end of this while we will have a string of angles every other index (only in the odd indexes) 
@@ -54,7 +54,7 @@ def decryptor(packet):
    for j in range(24):      #go over 24 mini data block (each data block is devided to 2 mini data block)
         for i in range(16): #go over the channels 
             
-            #we will need only laserID 1 and laserID 14 (Range is 0:15). 
+            #********************we will need only laserID 1 and laserID 14 (Range is 0:15)************************* 
             #calculating the radius:
             r=packet[j*N+i*M+1]+packet[j*N+i*M]    #Reversing + Combining the bytes
             r=int(r,16)                            #hex to decimal
@@ -68,8 +68,8 @@ def decryptor(packet):
             z=str(round(r*cos(phi[i]),2))
             
             #creating string that will hold all the data and will be printed to text file later in the program:
-            #we will need to add 3 more columns to the output string: theta, radius, reflectivity
-            #think about adding flag to choose between 2 options of outputs.
+            #***************we will need to add 3 more columns to the output string: theta, radius, reflectivity*************
+            #****************think about adding flag to choose between 2 options of outputs**********************
             xyzi = xyzi + "%10s %10s %10s" % (x,y,z) + '\n'
             
    return xyzi   # returns all the points of the entire packet
