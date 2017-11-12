@@ -18,6 +18,7 @@ def get_LiDAR_data(IP_LiDAR,port_LiDAR,V_matlab,IP_matlab,port_matlab,namber_of_
     being read by the matlab program. 
     """
     time.sleep(1)
+    # Create a new socket using the given address family, socket type(AF_INET-default) and protocol number(SOCK_DGRAM- default).
     # creating connection between the computer and the LiDAR:
     sock = socket.socket(socket.AF_INET,            # Internet
                               socket.SOCK_DGRAM)        # UDP
@@ -26,6 +27,9 @@ def get_LiDAR_data(IP_LiDAR,port_LiDAR,V_matlab,IP_matlab,port_matlab,namber_of_
     # get the data from the lidar:
     data=[]
     for i in range(0,namber_of_packeges):
+        # Receive data from the socket. The return value is a pair (string, address) where string is a string representing 
+        # the data received and address is the address of the socket sending the data.
+        # argument for this func is buffer size
         packet, addr = sock.recvfrom(2000)
         data.append(packet)
             
