@@ -1,0 +1,11 @@
+<keymap version="1" name="Default for XWin copy" parent="Default for XWin">
+  <action id="CompareTwoFiles" />
+  <action id="Diff.ShowDiff" />
+  <action id="EditorDeleteLine">
+    <keyboard-shortcut first-keystroke="ctrl d" />
+  </action>
+  <action id="EditorDuplicate" />
+  <action id="FileChooser.GotoDesktop" />
+  <action id="SendEOF" />
+  <action id="ShelvedChanges.Diff" />
+</keymap>
