@@ -10,24 +10,31 @@ import socket
 from struct import unpack
 from multiprocessing import Process, Queue
 from scapy.all import IP, UDP, wrpcap, Ether, rdpcap
-
+from scapy.utils import PcapWriter
+from signal import signal, SIGTERM
 
 NUM_OF_POINTS = 384     # number of points in each lidar packet
 STOP_ANGLE = 180        # the required angle to stop scaning each frame
+FLAG = True
 
+def handler(signum, frame):
+    global FLAG
+    FLAG = False
 
 class vlp16_online_feeder:
     def __init__(self, lidar_pcap, FOV, addr = ("0.0.0.0", 2368)):
         self.addr = addr
-        self.lidar_f = lidar_pcap
         self.FOV = FOV
+        self.fd_pcap = PcapWriter(lidar_pcap, append=True, sync=True)
         self.ether = Ether(dst='ff:ff:ff:ff:ff:ff')
         self.ip = IP(src="192.168.1.201", dst="255.255.255.255")
         self.udp = UDP(sport=2368, dport=2368)
-        self.packets_array = np.zeros(5)
         self.run()
 
-    def recv_worker(self, queue ,lidar_f, FOV, ether, ip, udp):
+    def recv_worker(self, queue, FOV, pcap_fd, ether , ip, udp):
+        self.packets_list = []
+        signal(SIGTERM, handler)
+        # atexit.register(handler, self.packets_list, pcap_fd)
         sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         try:
             print("Establish communication with Lidar...")
@@ -39,41 +46,47 @@ class vlp16_online_feeder:
             out = proc.stdout.read()
             out = "".join( chr(x) for x in out)
             out = out.split(sep=' ')
-            kill_command = 'kill ' + out[20]
+            kill_command = 'kill ' + out[19]
             print(kill_command)
             os.system(kill_command)
             time.sleep(2)
             sock.bind(self.addr)
             print('Connection Established')
             #prev_az = 0  # Not correct but not very important
-        while True:
-        # for packet in range(10):
+        while FLAG:
+            # if k.kill_now:
+            #     break
+            # for packet in range(10):
             raw_packet, addr = sock.recvfrom(2000)
-            # packet = ether/ip/udp/raw_packet
+            packet = ether/ip/udp/raw_packet
             # 1102 & 1103 are the bytes index of the last degree in packet
             # last_deg = int.from_bytes(raw_packet[1102:1104],byteorder='little')
             # if (last_deg >= 36000-(FOV/2)*100) or (last_deg <= (FOV/2)*100):
             t_stamp = time.time()
             packet.time = t_stamp
             queue.put((raw_packet,t_stamp))
-            wrpcap(lidar_f, packet, append=True)
+            # pcap_fd.write(packet)
+            self.packets_list.append(packet)
+
+        while self.packets_list:
+            pcap_fd.write(self.packets_list.pop(0))
+        pcap_fd.close()
+        os._exit(0)
 
     def run(self):
         self.queue = Queue()
-        self.proc = Process(target=self.recv_worker, args=(self.queue, self.lidar_f, self.FOV, self.ether,
+        self.proc = Process(target=self.recv_worker, args=(self.queue, self.FOV, self.fd_pcap, self.ether,
                                                            self.ip, self.udp),name='LIDAR_proc')
         self.proc.start()
 
     def get_packet(self):
         raw_packet, t_stamp = self.queue.get()
-        packet = self.ether/self.ip/self.udp/raw_packet
-        packet.time = t_stamp
-        
-        return packet, time_stamp
+        return raw_packet, t_stamp
 
     def close_socket(self):
         print('Terminating LIDAR Connection...')
         self.proc.terminate()
+
 
 class vlp16_offline_feeder:
     def __init__(self, lidar_f):
@@ -134,13 +147,6 @@ class vlp16_decoder:
         Z = R * np.sin(EL)
         packet_data = np.stack((X, Y, Z, AZ_deg, self.EL_DEG_REP, R, P), axis=2)
         return packet_data
-
-    # def get_decoded_packet(self):
-    #     raw_packet, time_stamp = self.packet_feeder.get_packet()
-    #     if raw_packet is None:
-    #         return None, None
-    #     packet_data = self.decode_packet(raw_packet)
-    #     return time_stamp, packet_data
 
     def get_next_decoded_packet(self):
         raw_packet, time_stamp = self.packet_feeder.get_packet()
@@ -234,8 +240,10 @@ class vlp16_decoder:
         plt.pause(0.001)
         plt.clf()
 
+
 def main():
     print('Running LIDAR script')
+
 
 if __name__ == '__main__':
     main()
