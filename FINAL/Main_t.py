@@ -4,30 +4,33 @@
 import time
 import pytictoc
 import matplotlib.pyplot as plt
-import  os
+import os
+import sys
 
 # Calaculatin and data manipulation libraries:
 import numpy as np
 import pandas as pd
+pd.set_option('float_format','{:f}'.format)
 import pickle
 
 # Project modules
-from Track_calculations import cone_finder, extrapolate_points
+from Track_calculations import cone_finder
 import LIDAR
 import IMU
+import Server_Client
 import utilities
-import cProfile
 
-# pd.set_option('display.max_columns', 500)
 
 # USER PARAMETERS:
-WORK_MODE = 1           # offline(reading data from pickle_file) = 0 , online(recording to pickle_file) = 1
+WORK_MODE = 0           # offline(reading data from pickle_file) = 0 , online(recording to pickle_file) = 1
 FOV = 160               # field of view
 NUM_OF_LASERS = 16      # VLP-16 Lidar
 NUM_OF_POINTS = 384     # number of points in each lidar packet
 NUM_OF_IMU_DATA = 7     # Yaw/Pitch/Roll/Lon/Lat/Alt/Timestamp
 PATH = '/home/avinoam/Desktop/'
 TEST_NAME = 'test' #time.strftime("%X_%d.%m.%y")
+FLAG = True
+
 
 #files names
 IMU_CSV =           PATH + 'IMU_' + TEST_NAME + '.csv'
@@ -36,8 +39,7 @@ LIDAR_CSV =         PATH + 'LIDAR_' + TEST_NAME + '.csv'
 CONES_CSV =         PATH + 'CONES_' + TEST_NAME + '.csv'
 LIDAR_w_IMU_Cor =   PATH + 'Lidar_w_IMU_Correction_' + TEST_NAME + '.csv'
 IMU_PKL =           PATH + 'imu_rec_' + TEST_NAME + '.pkl'
-LIDAR_PCAP =         PATH + 'lidar_rec_' + TEST_NAME + '.pcap'
-
+LIDAR_PCAP =        PATH + 'lidar_rec_' + TEST_NAME + '.pcap'
 
 class joint_feeder:
     def __init__(self):
@@ -58,12 +60,6 @@ class joint_feeder:
             print ('Done!!! - {} frames has been decrypted'.format(N_packets))
 
 
-    def get_world_coordinate(self, xyz_cones, time_stamp):
-        imu_data = self.imu_feeder.get_packet()
-        xyz_world = extrapolate_points(xyz_cones, imu_data, time_stamp)
-        # print(xyz_world)
-        return xyz_world
-
 def main():
 
     if not os.path.isdir(PATH):
@@ -73,29 +69,35 @@ def main():
 
     feeder = joint_feeder()
     lidar_decoder = LIDAR.vlp16_decoder(feeder.lidar_feeder)
+    # imu_feeder = feeder.imu_feeder
+
+    client = Server_Client.Client()
+
 
     #N_frames =  timeout * 10    #  10 frames per sec (velo working freq is 10Hz)
-    N_frames = 100
-    t = pytictoc.TicToc()
-    t.tic()
+    N_frames = 10
 
+    t= pytictoc.TicToc()
+    t.tic()
     for packet in range(N_frames):
         # utilities.print_progress(packet, N_frames-1)
         decoded_frame, time_stamp = lidar_decoder.get_full_frame()
         frame = np.reshape(decoded_frame, (decoded_frame.shape[0]*decoded_frame.shape[1],decoded_frame.shape[2]))
         timestamp_list = np.reshape(time_stamp, (len(time_stamp)*NUM_OF_POINTS,1))
-        # df_packet = pd.DataFrame(new_packet)
-        xyz_cones = cone_finder(frame, timestamp_list, FOV)
-        # if np.all(xyz_cones) == None:
-        #     continue
+        xyz_time_cones , fov_frame = cone_finder(frame, timestamp_list, FOV)
+
+        # sending xyz_time_cones to server "on the other side" :-)
+        client.send_packet(xyz_time_cones)
+
+        if np.all(xyz_time_cones) == None:
+            continue
         # else:
-        #     # print(xyz_cones)
-        #     xyz_world =
-        # if  feeder.get_world_coordinate(xyz_cones, time_stamp)
-        #     cone_to_csv = pd.DataFrame(xyz_cones)
-        #     cone_to_csv.to_csv(CONES_CSV, header= ['X', 'Y', 'Z'], mode= 'a')
+        #     cone_to_csv = pd.DataFrame(xyz_time_cones)
+        #     cone_to_csv.to_csv(CONES_CSV, header= ['X', 'Y', 'Z', 'Time'], mode= 'a')
+
     t.toc()
     feeder.close_joint_feeder(N_frames)
+
 
 if __name__ == '__main__':
     main()
