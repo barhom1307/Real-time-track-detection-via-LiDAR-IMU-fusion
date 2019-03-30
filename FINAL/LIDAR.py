@@ -60,7 +60,7 @@ class vlp16_online_feeder:
             out = proc.stdout.read()
             out = "".join( chr(x) for x in out)
             out = out.split(sep=' ')
-            kill_command = 'kill ' + out[19]
+            kill_command = 'kill -9 ' + out[19]
             print(kill_command)
             os.system(kill_command)
             time.sleep(2)
@@ -276,8 +276,8 @@ class vlp16_decoder:
 
         def draw_point_cloud(ax, title, axes=[0, 1], xlim3d=None, ylim3d=None, zlim3d=None):
             try:
-                ax.scatter(*np.transpose(velo_frame[:, axes]), s=10, c=velo_frame[:, 3], cmap='rainbow')
-                ax.scatter(*np.transpose(xyz_cones[:, axes]), s=100, c='r' ,marker='^', alpha=.8)
+                ax.scatter(*np.transpose(velo_frame[:, axes]), s=5, c=velo_frame[:, 3], cmap='Set1')
+                ax.scatter(*np.transpose(xyz_cones[:, axes]), s=100, c='r', marker='^', alpha=.8)
             except TypeError:
                 pass
             fig.text(0.5, 0.95, title, fontsize=14, horizontalalignment='center', verticalalignment='top', transform=ax.transAxes)

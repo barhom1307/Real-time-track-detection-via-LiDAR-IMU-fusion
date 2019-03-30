@@ -115,18 +115,23 @@ Returns: X-Y-Z in Earth frame of refrence
 class vn200_decoder:
     def __init__(self, packet_feeder):
         self.packet_feeder = packet_feeder
+        imu_t1 = packet_feeder.get_packet()
+        self.yaw0 = imu_t1[0]
+        self.pitch0 = imu_t1[1]
+        self.roll0 = imu_t1[2]
 
-    '''   
+
+    '''     
     Abstract: Finds the IMU values within an error value (default is 0.1 sec) to the times in lidar frame
 
     Parameters: list of lidar of all packet times in lidar frame
 
     Returns: IMU values closest to packets time (with error, default 0.1 sec)
     '''
-    def get_imu_frame(self, lidar_frame_time):
+    def get_imu_frame(self, lidar_packet_time):
         imu_t1 = self.packet_feeder.get_packet()
         try:
-            while abs(imu_t1[6] - lidar_frame_time[0]) > 0.1:  # TODO:Print and check times
+            while abs(imu_t1[6] - lidar_packet_time[0]) > 0.1:  # TODO:Print and check times
                 imu_t1 = self.packet_feeder.get_packet()
         except KeyError as e:
             pass
@@ -194,16 +199,18 @@ class vn200_decoder:
     Returns: xyz in earth LLA FoR
     '''
     def get_world_coords(self, xyzt_cones):  # both inputs are arranged so each row corresponds to the same time.
-        lidar_time_series = pd.Series(OrderedSet(xyzt_cones.iloc[:, 3]))
         xyzt_cones = pd.DataFrame(xyzt_cones)
+        lidar_time_series = pd.Series(OrderedSet(xyzt_cones.iloc[:, 3]))
         xyz_cones_imu_coord_sys = xyzt_cones.iloc[:, 0:3].dot(np.mat([[0, 1, 0], [1, 0, 0],  [0, 0, -1]]))
-        imu_t1, imu_t2 = vn200_decoder.get_imu_frame(self, lidar_frame_time=lidar_time_series)
-        vn200_decoder.imu_interpolate(self, imu_t1, imu_t2, lidar_frame_time=lidar_time_series)
+        imu_t1, imu_t2 = vn200_decoder.get_imu_frame(self, lidar_packet_time=lidar_time_series)
+        vn200_decoder.imu_interpolate(self, imu_t1, imu_t2, lidar_packet_time=lidar_time_series)
         ypr_db = self.interp_imu_frame.iloc[:, 0:3]
         ypr_rotation_mat = vn200_decoder.rotation_matrix(self, ypr_db.iloc[round(len(ypr_db)/2), :])
         xyz_cones_imu_coord_sys = xyz_cones_imu_coord_sys.dot(ypr_rotation_mat)
-        xyz_cones_lidar_coord_sys = xyz_cones_imu_coord_sys.dot(np.mat([[1, 0, 0], [0, -1, 0], [0, 0, -1]])), ypr_db.iloc[round(len(ypr_db) / 2), :]
-        return xyz_cones_lidar_coord_sys
+        # xyz_cones_lidar_coord_sys = xyz_cones_imu_coord_sys.dot(np.mat([[-1, 0, 0], [0, 1, 0], [0, 0, 1]]))
+        xyz_cones_lidar_coord_sys = xyz_cones_imu_coord_sys.dot(np.mat([[0, 1, 0], [1, 0, 0],  [0, 0, -1]]))
+        ypr_middleOfFrame = ypr_db.iloc[round(len(ypr_db) / 2), :]
+        return xyz_cones_lidar_coord_sys, ypr_middleOfFrame
 
 
 def main():
