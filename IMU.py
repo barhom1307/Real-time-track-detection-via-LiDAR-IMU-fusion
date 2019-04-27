@@ -7,73 +7,63 @@ from scipy.stats import linregress
 import pickle
 import time
 from multiprocessing import Process, Queue
-import scipy.interpolate as interp
-
-import RotMatrixes
-
-NUM_OF_PACKETS_LIDAR = 754  # number of lidar packets per 1 sec
-NUM_OF_PACKETS_IMU = 20     # number of IMU packets per 1 sec
-COLUMNS_IMU = 7             # number of IMU data columns
+from signal import signal, SIGTERM
+import os
+from matplotlib import style
+from pytictoc import TicToc
+import matplotlib.pyplot as plt
 
 
-def imu_interpolate(imu_data1, imu_data2, lidar_time):  # 1x7, 1x7, 1xlen(lidar_time)) || LIDAR_XYZT[3]
-    interp_imu_data = pd.DataFrame(np.zeros((len(lidar_time), 6)))
-    # if len(imu_data1)!=len(imu_data2):
-    #     print("Error IMU data-sets length don't match!")
-    #     return
-    imu_data = pd.DataFrame([imu_data1[0:6], imu_data2[0:6]])  # 2x6, without time values
-    time_vec = [imu_data1[6], imu_data2[6]]
-    imu_data_slope = imu_data.apply(lambda y: linregress(time_vec, y).slope, axis=0)
-    imu_data_intercept = imu_data.apply(lambda y: linregress(time_vec, y).intercept, axis=0)
-    linear_df = pd.DataFrame([imu_data_slope, imu_data_intercept])
-    print(linear_df)
-    for i, t in enumerate(lidar_time):
-        interp_imu_data.iloc[i, :] = linear_df.apply(lambda n: n[0]*t+n[1], axis=0)
-
-    return interp_imu_data
-
-def calc_corrected_xyz(interp_imu_data, lidar_xyz):  # both input are arrange so each row corresponds to the same time.
-    corrected_xyz = pd.DataFrame(np.zeros((len(lidar_xyz), 3)))
-    print(interp_imu_data)
-    exit()
-
-    for i,_ in enumerate(lidar_xyz):
-        corrected_xyz.iloc[i, :] = interp_imu_data.apply(lambda a: a[0] , axis=1)
-
-    print(corrected_xyz)
-    exit()
+pd.set_option('float_format', '{:f}'.format)
+style.use('fivethirtyeight')
+timer = TicToc()
 
 
+'''User Parameters'''
+EARTH_CIRCUMFERENCE = 40007860
+COLUMNS_IMU = 7  # number of IMU data columns
+FLAG = True
 
-def IMU_connect():
-    sensor = VnSensor()
-    print('Establishing Connection with IMU...')
-    sensor.connect('/dev/ttyUSB0', 921600)  # Default = 115200
-    #self.s.change_baudrate(921600) # Used to change baud rate (number of bytes/per sec in communication channel)
-    print('Connection Established')
-    return sensor
 
+def handler(signum, frame):
+    global FLAG
+    FLAG = False
+
+
+'''   
+Abstract: Reads data live from IMU sensor
+Parameters: full path to pickle (for option to save data)
+Returns:
+'''
 class vn200_online_feeder:
     def __init__(self, imu_pkl):
-        self.sensor = IMU_connect()
         self.IMU_PKL = imu_pkl
         self.run()
 
     def receiver(self, queue):
+        sensor = VnSensor()
+        print('Establishing Connection with IMU...')
+        sensor.connect('/dev/ttyUSB0', 115200)  # Default = 115200, fastest 921600
+        # sensor.change_baudrate(921600)
+        print('Connection Established, ' + 'Baudrate is: ' + str(sensor.read_serial_baudrate()))
+        signal(SIGTERM, handler)
+        self.imu_packets = []
+        while FLAG:
+            lla = sensor.read_ins_solution_lla()
+            lla_data = [
+                lla.yawPitchRoll.x,  # Yaw
+                lla.yawPitchRoll.y,  # Pitch
+                lla.yawPitchRoll.z,  # Roll
+                lla.position.x,      # Lat
+                lla.position.y,      # Long
+                lla.position.z,      # Alt
+                time.time()
+            ]
+            queue.put(lla_data)
+            self.imu_packets.append(lla_data)
         with open(self.IMU_PKL, 'wb') as imu_f:
-            while True:
-                lla = self.sensor.read_ins_solution_lla()
-                lla_data = [
-                    lla.yawPitchRoll.x,  # Yaw
-                    lla.yawPitchRoll.y,  # Pitch
-                    lla.yawPitchRoll.z,  # Roll
-                    lla.position.x,      # Lat
-                    lla.position.y,      # Long
-                    lla.position.z,      # Alt
-                    time.time()
-                ]
-                queue.put(lla_data)
-                pickle.dump(lla_data, imu_f)
+            pickle.dump(self.imu_packets, imu_f)
+        os._exit(0)
 
     def run(self):
         self.queue = Queue()
@@ -85,60 +75,180 @@ class vn200_online_feeder:
 
     def close_imu(self):
         print('Terminating IMU Connection...')
-        self.sensor.disconnect()
+        self.proc.terminate()
 
 
+'''   
+Abstract: Reads IMU data from csv file
+Parameters: imu_pkl - full path to pickle file of the imu data. (pickle  = serialaized data)
+Returns: 
+'''
 class vn200_offline_feeder:
     def __init__(self, imu_pkl):
-        self.IMU_PKL = imu_pkl
+        self.IMU_PKL = imu_pkl  # /...path.../../imu_rec_test.pkl
         imu_array = []
         print("Connecting to offline IMU feeder...")
-        with open(self.IMU_PKL,'rb') as imu_f:
+        print(self.IMU_PKL)
+        with open(self.IMU_PKL, 'rb') as imu_f:
             while True:
                 try:
                     imu_packet = pickle.load(imu_f)
                     imu_array = np.append(imu_array, imu_packet)
                 except EOFError:
                     break
-        imu_array = np.reshape(imu_array,(int(len(imu_array)/COLUMNS_IMU),COLUMNS_IMU))
+        imu_array = np.reshape(imu_array, (int(len(imu_array)/COLUMNS_IMU), COLUMNS_IMU))
         self.imu_list = imu_array.tolist()
 
     def get_packet(self):
         return self.imu_list.pop(0)
 
 
-    # def get_frame(self, lidar_timestamp):
-    #     imu_frame = []
-    #     imu_packet = self.imu_list.pop(0)
-    #     if imu_packet[COLUMNS_IMU-1]<lidar_timestamp:
-    #         imu_packet = self.imu_list.pop(0)
-    #     else:
-    #         for i in range(NUM_OF_PACKETS_IMU):
-    #             imu_frame = np.append(imu_frame, imu_packet)
-    #             imu_packet = self.imu_list.pop(0)
-    #     return imu_frame
+'''
+Abstract: Changes frame of refrence of lidar X-Y-Z
+          to Earth LLA frame of refrence using IMU data, Y-P-R.
+Parameters: X-Y-Z-t - data points filtered as cones by the cone_finder function
+Returns: X-Y-Z in Earth frame of refrence
+'''
+class vn200_decoder:
+    def __init__(self, packet_feeder):
+        self.packet_feeder = packet_feeder
+        imu_t1 = packet_feeder.get_packet()
+        self.yaw0 = imu_t1[0]
+        self.pitch0 = imu_t1[1]
+        self.roll0 = imu_t1[2]
+        self.lat0 = imu_t1[3]
+        self.long0 = imu_t1[4]
+        print("GPS Coordinates: \n" "Latitude: "+ str(self.lat0) + "\nLongtitude: " + str(self.long0))
+        self.METERS_PER_LAT = EARTH_CIRCUMFERENCE / 360
+        self.METERS_PER_LON = (EARTH_CIRCUMFERENCE * np.cos(imu_t1[3] * (np.pi / 180))) / 360
+        # imu_t1 = Lat and can be recaculate for each lat, but the difference is negligable. For speed we will use it as a constant.
+        self.Offset(imu_t1[3], imu_t1[4])
+        self.imu_ll_meters = pd.DataFrame()
+        self.xyz_cones_lidar_coord_sys = pd.DataFrame()
 
 
-        # self.imu_data = np.reshape(self.imu_data,(NUM_OF_PACKETS_IMU,COLUMNS_IMU))
-        # imu_df = pd.DataFrame(self.imu_data, columns=['Yaw', 'Pitch', 'Roll', 'Lat', 'Long', 'Alt', 'Time'])
-        # imu_full_frame = pd.DataFrame(interpolate_imu_frame(imu_df), columns=['Yaw', 'Pitch', 'Roll', 'Lat', 'Long', 'Alt', 'Time'])
-        # imu_full_frame.to_csv(IMU_CSV,index=False,mode='w',header=False)
+    '''   
+    Abstract: Finds the IMU values within an error value (default is 0.1 sec) to the times in lidar frame
+
+    Parameters: list of lidar of all packet times in lidar frame
+
+    Returns:
+    '''
+    def get_imu_frame(self, lidar_packet_time):
+        self.imu_t1 = self.packet_feeder.get_packet()
+        try:
+            while abs(self.imu_t1[6] - lidar_packet_time[round(len(lidar_packet_time)/2)]) > 0.1:  # TODO:Print and check times
+                self.imu_t1 = self.packet_feeder.get_packet()
+        except KeyError as e:
+            pass
+        self.imu_t2 = self.packet_feeder.get_packet()
+
+    '''   
+    Abstract: Uses linear regression to find the linear equeation of each imu data point. 
+              Assumes change is linear around a small time delta. (For better precision different implementation maybe needed)
+
+    Parameters: imu_data1 - closest data point before the lidar packet time point
+                imu_data2 - closest data point after the lidar packet time point
+                lidar_packet_time - time of all XYZ in this packet
+
+    Returns: saves a 2x6 array with the slope (first row) and intercept (second row) for each IMU data, Y-P-R-L-L-A.
+    '''
+    def imu_interpolate(self, lidar_packet_time):  # 1x7, 1x7, 1xlen(lidar_time)) || LIDAR_XYZT[3]
+        imu_data1=self.imu_t1
+        imu_data2=self.imu_t2
+        self.interp_imu_frame = pd.DataFrame(np.zeros((len(lidar_packet_time), 7)))
+
+        imu_data = pd.DataFrame([imu_data1[0:6], imu_data2[0:6]])  # 2x6, without time values
+        time_vec = [imu_data1[6], imu_data2[6]]
+
+        imu_data_slope = imu_data.apply(lambda y: linregress(time_vec, y).slope, axis=0)
+        # .apply passes each of the columns of imu_data (shape: [2x1]) to y.
+
+        imu_data_intercept = imu_data.apply(lambda y: linregress(time_vec, y).intercept, axis=0)
+        # .apply passes each of the columns of imu_data (shape: [2x1]) to y.
+        linear_df = pd.DataFrame([imu_data_slope, imu_data_intercept])
+        for i, t in enumerate(lidar_packet_time):
+            self.interp_imu_frame.iloc[i, :] = linear_df.apply(lambda n: n[0] * t + n[1], axis=0)
+        self.interp_imu_frame[6] = lidar_packet_time
+
+    '''   
+    Abstract: Creates 3 rotation matrixs 1 for each axis using the yaw, pitch and roll 
+              from the IMU and combines them to 1 rotation matrix.
+
+    Parameters: ypr - yaw, pitch, roll for the specific time we want.
+
+    Returns: rotation matrix around all 3 axis
+    '''
+    def rotation_matrix(self, ypr):
+        yaw = ypr[0] - self.yaw0
+        pitch = ypr[1] - self.pitch0
+        roll = ypr[2] - self.roll0
+
+        R_Mat_Yaw = np.mat([[np.cos(yaw * (np.pi / 180)), np.sin(yaw * (np.pi / 180)), 0],
+                            [-np.sin(yaw * (np.pi / 180)), np.cos(yaw * (np.pi / 180)), 0],
+                            [0, 0, 1]])
+
+        R_Mat_Pitch = np.mat([[np.cos(pitch * (np.pi / 180)), 0, -np.sin(pitch * (np.pi / 180))],
+                              [0, 1, 0],
+                              [np.sin(pitch * (np.pi / 180)), 0, np.cos(pitch * (np.pi / 180))]])
+
+        R_Mat_Roll = np.mat([[1, 0, 0],
+                             [0, np.cos(roll * (np.pi / 180)), np.sin(roll * (np.pi / 180))],
+                             [0, -np.sin(roll * (np.pi / 180)), np.cos(roll * (np.pi / 180))]])
+
+        return R_Mat_Yaw.dot(R_Mat_Pitch.dot(R_Mat_Roll))  # Returns matrix for LLA frame of reference
+
+    '''   
+    Abstract: The main function of the class, recieves lidar points in 
+              lidar frame of refrence (FoR) and returns them in Earch LLA FoR
+
+    Parameters: xyzt_cones - lidar points with time stamp after cone filtering
+
+    Returns: xyz in earth LLA FoR, YPR, Long and Lat
+    '''
+    def get_world_coords(self, xyzt_cones):  # both inputs are arranged so each row corresponds to the same time.
+        xyzt_cones = pd.DataFrame(xyzt_cones)
+        lidar_time_series = pd.Series(xyzt_cones.iloc[:, 3])
+
+        # Change X-Y-Z to IMU frame of reference
+        xyz_cones_imu_coord_sys = xyzt_cones.iloc[:, 0:3].dot(np.mat([[0, 1, 0], [1, 0, 0],  [0, 0, -1]]))
+
+        # Get the imu points closest to the lidar time of mid frame
+        vn200_decoder.get_imu_frame(self, lidar_packet_time=lidar_time_series)
+
+        # Based on the 2 imu points we create a linear regression for each imu parameter and insert the lidar time vector.
+        vn200_decoder.imu_interpolate(self, lidar_packet_time=lidar_time_series)
+
+        # Create 1 rotation matrix based on imu values from the middle of the frame.
+        # Saves alot of time instead of createing a different rotation matrixes for each time. Accuracy is good enough and speed is many times better.
+        ypr = self.interp_imu_frame.iloc[round(len(lidar_time_series) / 2), 0:3]
+        ypr_rotation_mat = vn200_decoder.rotation_matrix(self, ypr)
+
+        # Correct the LIDAR X-Y-Z using the IMU data Yaw-Pitch-Roll, euler angles (rotations along the major axis)
+        xyz_cones_imu_coord_sys = xyz_cones_imu_coord_sys.dot(ypr_rotation_mat)
+
+        # Return X-Y-Z to Lidar frame of reference for ploting-visualy more comfortable.
+        self.xyz_cones_lidar_coord_sys = pd.DataFrame(xyz_cones_imu_coord_sys.dot(np.mat([[0, 1, 0], [1, 0, 0], [0, 0, -1]])))
+
+        # We take into account that for small distances up 1 km^2 the surface is aprx. flat,
+        # Thus longtitude and latitude degrees can be converted to meters.
+        self.interp_imu_frame.iloc[:, 3] = (self.interp_imu_frame.iloc[:, 3] * self.METERS_PER_LAT) - self.LAT_OFFSET_METERS
+        self.interp_imu_frame.iloc[:, 4] = (self.interp_imu_frame.iloc[:, 4] * self.METERS_PER_LON) - self.LON_OFFSET_METERS
+
+        # We add to the X-Y columns of points that have been corrected using the Y-P-R the meter values from the long/lat deg.
+        # (long = x, lat = y)
+        # Thus we create a fixed world map, with all points of a given cone from different frames and packets being placed aprx. at the same spot.
+        self.xyz_cones_lidar_coord_sys.iloc[:, 0] = self.xyz_cones_lidar_coord_sys.iloc[:, 0] + self.interp_imu_frame.iloc[:, 4]
+        self.xyz_cones_lidar_coord_sys.iloc[:, 1] = self.xyz_cones_lidar_coord_sys.iloc[:, 1] + self.interp_imu_frame.iloc[:, 3]
+        return self.xyz_cones_lidar_coord_sys, ypr, self.interp_imu_frame.iloc[:, 3][0], self.interp_imu_frame.iloc[:, 4][0]
+
+    def Offset(self, LAT_DEG, LON_DEG):
+        self.LAT_OFFSET_METERS = self.METERS_PER_LAT * LAT_DEG
+        self.LON_OFFSET_METERS = self.METERS_PER_LON * LON_DEG
 
 
 def main():
-    # imu_interpolate([1, 2, 3, 4, 5, 6, 0], [2, 3, 4, 5, 6, 7, 1], [-1, 1, 100])
-    calc_corrected_xyz(imu_interpolate([1, 2, 3, 4, 5, 6, 0], [2, 3, 4, 5, 6, 7, 1], [-100, -1, 1, 100, 1001]), [[1, 1, 1], [2, 2, 2]])
-    # print(time.time())
-    # if online:
-    #     imu_online = vn200_online_feeder()
-    #     for i in range(3):
-    #         last_imu_packet, curr_imu_packet = imu_online.get_packet(1541619975.3525062)
-    #         print(last_imu_packet[6], curr_imu_packet[6])
-    # else:
-    #     imu_offline = vn200_offline_feeder()
-    #     imu_frame = imu_offline.get_frame(1541627089.6306312)
-    #     print(imu_frame)
-
+    print('Running IMU script')
 
 if __name__ == '__main__':
     main()
