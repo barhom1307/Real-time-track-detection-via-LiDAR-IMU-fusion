@@ -1,6 +1,6 @@
 # Real-time-track-detection-via-LiDAR-IMU-fusion
 
-[![Video](https://img.youtube.com/vi/https://www.youtube.com/watch?v=cojekL9opk0/hqdefault.jpg)](https://www.youtube.com/watch?v=cojekL9opk0)
+[![Video](/proj_images/video.PNG)](https://www.youtube.com/watch?v=cojekL9opk0)
 
 "Real-time path detection for autonomous Formula vehicle" project was developed as a final project in Electrical Engineering Faculty, Technion haifa. 
 
