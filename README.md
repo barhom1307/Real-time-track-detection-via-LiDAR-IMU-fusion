@@ -6,6 +6,8 @@
 
 The project was accompanied by [Vision and Image Sciences Laboratory (VISL)](https://visl.technion.ac.il/projects/2018w02/), and [Technion Formula Student Team](https://www.facebook.com/TechnionFSAE/).
 
+Developed by Aviv Regev & Avinoam Barhom, Supervisor - Danny Veikhrman 
+
 ---
 
 ## Project Goals
